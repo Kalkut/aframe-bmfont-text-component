@@ -143,6 +143,8 @@
 	        opacity: data.opacity
 	      }));
 
+	      material.map = texture;
+
 	      var text = new THREE.Mesh(geometry, material);
 
 	      // Rotate so text faces the camera
@@ -947,6 +949,7 @@
 /***/ function(module, exports, __webpack_require__) {
 
 	var flatten = __webpack_require__(13)
+	var warned = false;
 
 	module.exports.attr = setAttribute
 	module.exports.index = setIndex
@@ -986,8 +989,39 @@
 	  if (!attrib || rebuildAttribute(attrib, data, itemSize)) {
 	    // create a new array with desired type
 	    data = flatten(data, dtype)
-	    attrib = new THREE.BufferAttribute(data, itemSize)
+
+	    var needsNewBuffer = attrib && typeof attrib.setArray !== 'function'
+	    if (!attrib || needsNewBuffer) {
+	      // We are on an old version of ThreeJS which can't
+	      // support growing / shrinking buffers, so we need
+	      // to build a new buffer
+	      if (needsNewBuffer && !warned) {
+	        warned = true
+	        console.warn([
+	          'A WebGL buffer is being updated with a new size or itemSize, ',
+	          'however this version of ThreeJS only supports fixed-size buffers.',
+	          '\nThe old buffer may still be kept in memory.\n',
+	          'To avoid memory leaks, it is recommended that you dispose ',
+	          'your geometries and create new ones, or update to ThreeJS r82 or newer.\n',
+	          'See here for discussion:\n',
+	          'https://github.com/mrdoob/three.js/pull/9631'
+	        ].join(''))
+	      }
+
+	      // Build a new attribute
+	      attrib = new THREE.BufferAttribute(data, itemSize);
+	    }
+
+	    attrib.itemSize = itemSize
 	    attrib.needsUpdate = true
+
+	    // New versions of ThreeJS suggest using setArray
+	    // to change the data. It will use bufferData internally,
+	    // so you can change the array size without any issues
+	    if (typeof attrib.setArray === 'function') {
+	      attrib.setArray(data)
+	    }
+
 	    return attrib
 	  } else {
 	    // copy data into the existing array
@@ -1388,7 +1422,7 @@
 /* 18 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/* WEBPACK VAR INJECTION */(function(Buffer, global) {/*!
+	/* WEBPACK VAR INJECTION */(function(global) {/*!
 	 * The buffer module from node.js, for the browser.
 	 *
 	 * @author   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
@@ -3178,7 +3212,7 @@
 	  return val !== val // eslint-disable-line no-self-compare
 	}
 
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(18).Buffer, (function() { return this; }())))
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
 /* 19 */
@@ -3186,6 +3220,7 @@
 
 	'use strict'
 
+	exports.byteLength = byteLength
 	exports.toByteArray = toByteArray
 	exports.fromByteArray = fromByteArray
 
@@ -3193,23 +3228,17 @@
 	var revLookup = []
 	var Arr = typeof Uint8Array !== 'undefined' ? Uint8Array : Array
 
-	function init () {
-	  var code = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-	  for (var i = 0, len = code.length; i < len; ++i) {
-	    lookup[i] = code[i]
-	    revLookup[code.charCodeAt(i)] = i
-	  }
-
-	  revLookup['-'.charCodeAt(0)] = 62
-	  revLookup['_'.charCodeAt(0)] = 63
+	var code = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+	for (var i = 0, len = code.length; i < len; ++i) {
+	  lookup[i] = code[i]
+	  revLookup[code.charCodeAt(i)] = i
 	}
 
-	init()
+	revLookup['-'.charCodeAt(0)] = 62
+	revLookup['_'.charCodeAt(0)] = 63
 
-	function toByteArray (b64) {
-	  var i, j, l, tmp, placeHolders, arr
+	function placeHoldersCount (b64) {
 	  var len = b64.length
-
 	  if (len % 4 > 0) {
 	    throw new Error('Invalid string. Length must be a multiple of 4')
 	  }
@@ -3219,9 +3248,19 @@
 	  // represent one byte
 	  // if there is only one, then the three characters before it represent 2 bytes
 	  // this is just a cheap hack to not do indexOf twice
-	  placeHolders = b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
+	  return b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
+	}
 
+	function byteLength (b64) {
 	  // base64 is 4/3 + up to two characters of the original data
+	  return b64.length * 3 / 4 - placeHoldersCount(b64)
+	}
+
+	function toByteArray (b64) {
+	  var i, j, l, tmp, placeHolders, arr
+	  var len = b64.length
+	  placeHolders = placeHoldersCount(b64)
+
 	  arr = new Arr(len * 3 / 4 - placeHolders)
 
 	  // if there are placeholders, only get up to the last complete 4 chars
@@ -3490,15 +3529,6 @@
 	        return body
 	    }
 
-	    var failureResponse = {
-	                body: undefined,
-	                headers: {},
-	                statusCode: 0,
-	                method: method,
-	                url: uri,
-	                rawRequest: xhr
-	            }
-
 	    function errorFunc(evt) {
 	        clearTimeout(timeoutTimer)
 	        if(!(evt instanceof Error)){
@@ -3554,18 +3584,26 @@
 	    var aborted
 	    var uri = xhr.url = options.uri || options.url
 	    var method = xhr.method = options.method || "GET"
-	    var body = options.body || options.data || null
+	    var body = options.body || options.data
 	    var headers = xhr.headers = options.headers || {}
 	    var sync = !!options.sync
 	    var isJson = false
 	    var timeoutTimer
+	    var failureResponse = {
+	        body: undefined,
+	        headers: {},
+	        statusCode: 0,
+	        method: method,
+	        url: uri,
+	        rawRequest: xhr
+	    }
 
-	    if ("json" in options) {
+	    if ("json" in options && options.json !== false) {
 	        isJson = true
 	        headers["accept"] || headers["Accept"] || (headers["Accept"] = "application/json") //Don't override existing accept header declared by user
 	        if (method !== "GET" && method !== "HEAD") {
 	            headers["content-type"] || headers["Content-Type"] || (headers["Content-Type"] = "application/json") //Don't override existing accept header declared by user
-	            body = JSON.stringify(options.json)
+	            body = JSON.stringify(options.json === true ? body : options.json)
 	        }
 	    }
 
@@ -3575,6 +3613,9 @@
 	    // IE9 must have onprogress be set to a unique function.
 	    xhr.onprogress = function () {
 	        // IE must die
+	    }
+	    xhr.onabort = function(){
+	        aborted = true;
 	    }
 	    xhr.ontimeout = errorFunc
 	    xhr.open(method, uri, !sync, options.username, options.password)
@@ -3587,7 +3628,8 @@
 	    // both npm's request and jquery 1.x use this kind of timeout, so this is being consistent
 	    if (!sync && options.timeout > 0 ) {
 	        timeoutTimer = setTimeout(function(){
-	            aborted=true//IE9 may still call readystatechange
+	            if (aborted) return
+	            aborted = true//IE9 may still call readystatechange
 	            xhr.abort("timeout")
 	            var e = new Error("XMLHttpRequest timeout")
 	            e.code = "ETIMEDOUT"
@@ -3615,7 +3657,10 @@
 	        options.beforeSend(xhr)
 	    }
 
-	    xhr.send(body)
+	    // Microsoft Edge browser sends "undefined" when send is called with undefined value.
+	    // XMLHttpRequest spec says to pass null as body to indicate no body
+	    // See https://github.com/naugtur/xhr/issues/100.
+	    xhr.send(body || null)
 
 	    return xhr
 

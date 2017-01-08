@@ -97,6 +97,8 @@ AFRAME.registerComponent('bmfont-text', {
         opacity: data.opacity
       }));
 
+      material.map = texture;
+
       var text = new THREE.Mesh(geometry, material);
 
       // Rotate so text faces the camera

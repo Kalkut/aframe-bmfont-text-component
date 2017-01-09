@@ -10,6 +10,23 @@ var SDFShader = require('./lib/shaders/sdf');
 require('./extras/text-primitive.js'); // Register experimental text primitive
 
 /**
+ * bmfont system to cache fonts.
+ */
+AFRAME.registerSystem('bmfont-text', {
+  init: function () {
+    this.fonts = {};
+  },
+
+  addFont: function (name, font) {
+    this.fonts[name] = font;
+  },
+
+  findFont: function (name) {
+    return this.fonts[name];
+  }
+});
+
+/**
  * bmfont text component for A-Frame.
  */
 AFRAME.registerComponent('bmfont-text', {
@@ -63,9 +80,10 @@ AFRAME.registerComponent('bmfont-text', {
     // Entity data
     var el = this.el;
     var data = this.data;
+    var system = this.system;
 
     // Use fontLoader utility to load 'fnt' and texture
-    fontLoader({
+    fontLoader(system, {
       font: data.fnt,
       image: data.fntImage
     }, start);
@@ -125,15 +143,22 @@ AFRAME.registerComponent('bmfont-text', {
  * A utility to load a font with bmfont-load
  * and a texture with Three.TextureLoader()
  */
-function fontLoader (opt, cb) {
-  loadFont(opt.font, function (err, font) {
-    if (err) {
-      throw err;
-    }
+function fontLoader (system, opt, cb) {
+  var font = system.findFont(opt.font);
 
-    var textureLoader = new THREE.TextureLoader();
-    textureLoader.load(opt.image, function (texture) {
-      cb(font, texture);
+  if (font) {
+    cb(font.font, font.texture);
+  } else {
+    loadFont(opt.font, function (err, font) {
+      if (err) {
+        throw err;
+      }
+
+      var textureLoader = new THREE.TextureLoader();
+        textureLoader.load(opt.image, function (texture) {
+          system.addFont(opt.font, { font: font, texture: texture } );
+          cb(font, texture);
+      });
     });
-  });
+  }
 }
